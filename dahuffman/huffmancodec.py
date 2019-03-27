@@ -190,7 +190,7 @@ class HuffmanCodec(PrefixCodec):
         heap = [(f, [(s, (0, 0))]) for s, f in frequencies.items()]
         # Add EOF symbol.
         # TODO: argument to set frequency of EOF?
-        heap.append((1, [(_EOF, (0, 0))]))
+        # heap.append((1, [(_EOF, (0, 0))]))
 
         # Use heapq approach to build the encodings of the huffman tree leaves.
         heapify(heap)
