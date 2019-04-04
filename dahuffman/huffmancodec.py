@@ -72,7 +72,6 @@ class PrefixCodec(object):
             )
             # TODO check if code table is actually a prefix code
 
-    
     def get_expected_code_length(self, frequencies):
         """
         Computes the expected code-length of the encoding.
@@ -86,9 +85,26 @@ class PrefixCodec(object):
             freq = frequencies[symbol]
             expected_length += freq * length
             normalization += freq
-            
+
         return expected_length / normalization
-    
+
+    def get_average_discrepancy(self, frequencies):
+        """
+        Computes the average discrepancy between the node probabilities and the frequencies. (assuming {0,1}* ~ Unif({0,1}^*))
+        """
+        assert set(frequencies.keys()) == set(self._table.keys())
+
+        probabilities = {}
+        normalization = 0
+        for symbol, (length, _) in self._table.items():
+            normalization += frequencies[symbol]
+            probabilities[symbol] = 2**(-length)
+
+        discrepancy = 0
+        for symbol, (length, _) in self._table.items():
+            discrepancy += abs(probabilities[symbol] - frequencies[symbol]/normalization)
+
+        return discrepancy / len(self._table)
 
     def get_code_table(self):
         """
