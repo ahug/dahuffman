@@ -72,6 +72,24 @@ class PrefixCodec(object):
             )
             # TODO check if code table is actually a prefix code
 
+    
+    def get_expected_code_length(self, frequencies):
+        """
+        Computes the expected code-length of the encoding.
+        :return: L = E_X[l(X)]  where P(x_i) = probs[i]
+        """
+        assert set(frequencies.keys()) == set(self._table.keys())  # assert that the vocabulary is the same
+
+        normalization = 0
+        expected_length = 0
+        for symbol, (length, _) in self._table.items():
+            freq = frequencies[symbol]
+            expected_length += freq * length
+            normalization += freq
+            
+        return expected_length / normalization
+    
+
     def get_code_table(self):
         """
         Get code table
