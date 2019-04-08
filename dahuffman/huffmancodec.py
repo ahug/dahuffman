@@ -1,6 +1,7 @@
 import collections
 import itertools
 import sys
+import json
 from collections import defaultdict
 from heapq import heappush, heappop, heapify
 
@@ -28,6 +29,11 @@ class PrefixCodec(object):
         normalization = sum(v for k, v in probs_dict.items())
         self.probs_dict = {k: v / normalization for k, v in probs_dict.items()}
 
+        # also compute the actual probability of each symbol being chosen (assumes that the bits {0,1}* are equally likely and i.i.d.)
+        self.symbol_probs = defaultdict(float)
+        for code, symbol in self.code_2_symbol.items():
+            self.symbol_probs[symbol] += 2**(-len(code))
+
     def expected_code_length(self):
         """
         Computes the expected code-length of the encoding.
@@ -38,22 +44,17 @@ class PrefixCodec(object):
         expected_length = sum(2**(-len(code)) * len(code) for code, _ in self.code_2_symbol.items())
         return expected_length
 
-    def average_discrepancy(self):
+    def discrepancy(self):
         """
         Computes the average discrepancy between the node probabilities and the probabilities. (assuming {0,1}* ~ Unif({0,1}^*))
         """
         assert set(self.probs_dict.keys()) == set(self.code_2_symbol.values())
 
-        # one symbol might have multiple codes (not-uniquely decodable)
-        symbol_probs = defaultdict(float)
-        for code, symbol in self.code_2_symbol.items():
-            symbol_probs[symbol] += 2**(-len(code))
-
         discrepancy = 0
-        for symbol, prob in symbol_probs.items():
-            discrepancy += abs(prob - self.probs_dict[symbol])
+        for symbol, prob in self.symbol_probs.items():
+            discrepancy += abs(self.symbol_probs[symbol] - self.probs_dict[symbol])
 
-        return discrepancy / len(symbol_probs)
+        return discrepancy / len(self.symbol_probs)
 
     def __repr__(self):
         return "Codes: " + repr(self.code_2_symbol)
@@ -109,6 +110,8 @@ class BinaryApproximationTree(PrefixCodec):
 
     @classmethod
     def from_probabilities(cls, probs_dict, max_depth=10):
+        # assert abs(1 - sum(probs_dict.values())) < 1e-6
+
         symbols, probs = zip(*probs_dict.items())
 
         free_nodes = ["0", "1"]
@@ -124,12 +127,17 @@ class BinaryApproximationTree(PrefixCodec):
             # all remaining free nodes are expanded
             free_nodes = [node+bit for node in free_nodes for bit in ["0", "1"]]
 
+        # assert len(free_nodes) == 0
+
         code_2_symbol = {}
         for symbol_ix, codes in symbol_2_nodes.items():
             for code in codes:
                 code_2_symbol[code] = symbols[symbol_ix]  # we only considered symbol indices until here
 
-        return PrefixCodec(code_2_symbol, probs_dict)
+        # make sure all symbols have actually been encoded, i.e. each symbol has at least one associated code
+        assert set(code_2_symbol.values()) == set(probs_dict.keys()) and "not all symbols have been encoded"
+
+        return PrefixCodec(code_2_symbol, probs_dict), free_nodes
 
     @classmethod
     def _binary_expansion(cls, x, max_depth):
