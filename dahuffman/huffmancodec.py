@@ -123,87 +123,6 @@ class PrefixCodec(object):
                 b=bitsize, v=value, s=symbol, c=bin(value)[2:].rjust(bitsize, '0')
             ))
 
-    def encode(self, data):
-        """
-        Encode given data.
-
-        :param data: sequence of symbols (e.g. byte string, unicode string, list, iterator)
-        :return: byte string
-        """
-        return concat_bytes(self.encode_streaming(data))
-
-    def encode_streaming(self, data):
-        """
-        Encode given data in streaming fashion.
-
-        :param data: sequence of symbols (e.g. byte string, unicode string, list, iterator)
-        :return: generator of bytes (single character strings in Python2, ints in Python 3)
-        """
-        # Buffer value and size
-        buffer = 0
-        size = 0
-        for s in data:
-            b, v = self._table[s]
-            # Shift new bits in the buffer
-            buffer = (buffer << b) + v
-            size += b
-            while size >= 8:
-                byte = buffer >> (size - 8)
-                yield to_byte(byte)
-                buffer = buffer - (byte << (size - 8))
-                size -= 8
-
-        # Handling of the final sub-byte chunk.
-        # The end of the encoded bit stream does not align necessarily with byte boundaries,
-        # so we need an "end of file" indicator symbol (_EOF) to guard against decoding
-        # the non-data trailing bits of the last byte.
-        # As an optimization however, while encoding _EOF, it is only necessary to encode up to
-        # the end of the current byte and cut off there.
-        # No new byte has to be started for the remainder, saving us one (or more) output bytes.
-        if size > 0:
-            b, v = self._table[_EOF]
-            buffer = (buffer << b) + v
-            size += b
-            if size >= 8:
-                byte = buffer >> (size - 8)
-            else:
-                byte = buffer << (8 - size)
-            yield to_byte(byte)
-
-    def decode(self, data, as_list=False):
-        """
-        Decode given data.
-
-        :param data: sequence of bytes (string, list or generator of bytes)
-        :param as_list: whether to return as a list instead of
-        :return:
-        """
-        return self._concat(self.decode_streaming(data))
-
-    def decode_streaming(self, data):
-        """
-        Decode given data in streaming fashion
-
-        :param data: sequence of bytes (string, list or generator of bytes)
-        :return: generator of symbols
-        """
-        # Reverse lookup table: map (bitsize, value) to symbols
-        lookup = dict(((b, v), s) for (s, (b, v)) in self._table.items())
-
-        buffer = 0
-        size = 0
-        for byte in data:
-            for m in [128, 64, 32, 16, 8, 4, 2, 1]:
-                buffer = (buffer << 1) + bool(from_byte(byte) & m)
-                size += 1
-                if (size, buffer) in lookup:
-                    symbol = lookup[size, buffer]
-                    if symbol == _EOF:
-                        return
-                    yield symbol
-                    buffer = 0
-                    size = 0
-
 
 class HuffmanCodec(PrefixCodec):
     """
@@ -244,14 +163,3 @@ class HuffmanCodec(PrefixCodec):
         table = dict(heappop(heap)[1])
 
         return cls(table, concat=concat, check=False)
-
-    @classmethod
-    def from_data(cls, data):
-        """
-        Build Huffman code table from symbol sequence
-
-        :param data: sequence of symbols (e.g. byte string, unicode string, list, iterator)
-        :return: HuffmanCoder
-        """
-        frequencies = collections.Counter(data)
-        return cls.from_frequencies(frequencies, concat=_guess_concat(data))
