@@ -7,39 +7,6 @@ from heapq import heappush, heappop, heapify
 from .compat import to_byte, from_byte, concat_bytes
 
 
-class _EndOfFileSymbol(object):
-    """
-    Internal class for "end of file" symbol to be able
-    to detect the end of the encoded bit stream,
-    which does not necessarily align with byte boundaries.
-    """
-
-    def __repr__(self):
-        return '_EOF'
-
-    # Because _EOF will be compared with normal symbols (strings, bytes),
-    # we have to provide a minimal set of comparison methods.
-    # We'll make _EOF smaller than the rest (meaning lowest frequency)
-    def __lt__(self, other):
-        return True
-
-    def __gt__(self, other):
-        return False
-
-    def __eq__(self, other):
-        return other.__class__ == self.__class__
-
-    def __hash__(self):
-        return hash(self.__class__)
-
-
-# Singleton-like "end of file" symbol
-_EOF = _EndOfFileSymbol()
-
-
-# TODO store/load code table from file
-# TODO Directly encode to and decode from file
-
 def _guess_concat(data):
     """
     Guess concat function from given data
@@ -55,74 +22,41 @@ class PrefixCodec(object):
     Prefix code codec, using given code table.
     """
 
-    def __init__(self, code_table, concat=list, check=True):
-        """
-        Initialize codec with given code table.
+    def __init__(self, code_2_symbol, probs_dict):
+        self.code_2_symbol = code_2_symbol
 
-        :param code_table: mapping of symbol to code tuple (bitsize, value)
-        :param concat: function to concatenate symbols
-        :param check: whether to check the code table
-        """
-        # Code table is dictionary mapping symbol to (bitsize, value)
-        self._table = code_table
-        self._concat = concat
-        if check:
-            assert isinstance(self._table, dict) and all(
-                isinstance(b, int) and b >= 1 and isinstance(v, int) and v >= 0
-                for (b, v) in self._table.itervalues()
-            )
-            # TODO check if code table is actually a prefix code
+        normalization = sum(v for k, v in probs_dict.items())
+        self.probs_dict = {k: v / normalization for k, v in probs_dict.items()}
 
-    def get_expected_code_length(self, probabilities):
+    def expected_code_length(self):
         """
         Computes the expected code-length of the encoding.
         :return: L = E_X[l(X)]  where P(x_i) = probs[i]
         """
-        assert set(probabilities.keys()) == set(self._table.keys())  # assert that the vocabulary is the same
+        assert set(self.probs_dict.keys()) == set(self.code_2_symbol.values())  # assert that the vocabulary is the same
 
-        normalization = 0
-        expected_length = 0
-        for symbol, (length, _) in self._table.items():
-            freq = probabilities[symbol]
-            expected_length += freq * length
-            normalization += freq
+        expected_length = sum(2**(-len(code)) * len(code) for code, _ in self.code_2_symbol.items())
+        return expected_length
 
-        return expected_length / normalization
-
-    def get_average_discrepancy(self, probabilities):
+    def average_discrepancy(self):
         """
         Computes the average discrepancy between the node probabilities and the probabilities. (assuming {0,1}* ~ Unif({0,1}^*))
         """
-        assert set(probabilities.keys()) == set(self._table.keys())
+        assert set(self.probs_dict.keys()) == set(self.code_2_symbol.values())
 
-        probabilities = {}
-        normalization = 0
-        for symbol, (length, _) in self._table.items():
-            normalization += probabilities[symbol]
-            probabilities[symbol] = 2**(-length)
+        # one symbol might have multiple codes (not-uniquely decodable)
+        symbol_probs = defaultdict(float)
+        for code, symbol in self.code_2_symbol.items():
+            symbol_probs[symbol] += 2**(-len(code))
 
         discrepancy = 0
-        for symbol, (length, _) in self._table.items():
-            discrepancy += abs(probabilities[symbol] - probabilities[symbol]/normalization)
+        for symbol, prob in symbol_probs.items():
+            discrepancy += abs(prob - self.probs_dict[symbol])
 
-        return discrepancy / len(self._table)
+        return discrepancy / len(symbol_probs)
 
-    def get_code_table(self):
-        """
-        Get code table
-        :return: dictionary mapping symbol to code tuple (bitsize, value)
-        """
-        return self._table
-
-    def print_code_table(self, out=sys.stdout):
-        """
-        Print code table overview
-        """
-        out.write(u'bits  code       (value)  symbol\n')
-        for symbol, (bitsize, value) in sorted(self._table.items()):
-            out.write(u'{b:4d}  {c:10} ({v:5d})  {s!r}\n'.format(
-                b=bitsize, v=value, s=symbol, c=bin(value)[2:].rjust(bitsize, '0')
-            ))
+    def __repr__(self):
+        return "Codes: " + repr(self.code_2_symbol)
 
 
 class HuffmanCodec(PrefixCodec):
@@ -132,16 +66,16 @@ class HuffmanCodec(PrefixCodec):
     """
 
     @classmethod
-    def from_probabilities(cls, probabilities, concat=None):
+    def from_probabilities(cls, probs_dict, concat=None):
         """
         Build Huffman code table from given symbol probabilities
         :param probabilities: symbol to probability mapping
         :param concat: function to concatenate symbols
         """
-        concat = concat or _guess_concat(next(iter(probabilities)))
+        concat = concat or _guess_concat(next(iter(probs_dict)))
 
         # Heap consists of tuples: (frequency, [list of tuples: (symbol, (bitsize, value))])
-        heap = [(f, [(s, (0, 0))]) for s, f in probabilities.items()]
+        heap = [(f, [(s, (0, 0))]) for s, f in probs_dict.items()]
         # Add EOF symbol.
         # TODO: argument to set frequency of EOF?
         # heap.append((1, [(_EOF, (0, 0))]))
@@ -168,7 +102,7 @@ class HuffmanCodec(PrefixCodec):
             code = bin(value)[2:].rjust(bitsize, '0')
             code_2_symbol[code] = symbol
 
-        return code_2_symbol
+        return PrefixCodec(code_2_symbol, probs_dict)
 
 
 class BinaryApproximationTree(PrefixCodec):
@@ -195,7 +129,7 @@ class BinaryApproximationTree(PrefixCodec):
             for code in codes:
                 code_2_symbol[code] = symbols[symbol_ix]  # we only considered symbol indices until here
 
-        return code_2_symbol
+        return PrefixCodec(code_2_symbol, probs_dict)
 
     @classmethod
     def _binary_expansion(cls, x, max_depth):
