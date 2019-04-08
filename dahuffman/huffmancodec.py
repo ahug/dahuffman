@@ -1,6 +1,7 @@
 import collections
 import itertools
 import sys
+from collections import defaultdict
 from heapq import heappush, heappop, heapify
 
 from .compat import to_byte, from_byte, concat_bytes
@@ -72,37 +73,37 @@ class PrefixCodec(object):
             )
             # TODO check if code table is actually a prefix code
 
-    def get_expected_code_length(self, frequencies):
+    def get_expected_code_length(self, probabilities):
         """
         Computes the expected code-length of the encoding.
         :return: L = E_X[l(X)]  where P(x_i) = probs[i]
         """
-        assert set(frequencies.keys()) == set(self._table.keys())  # assert that the vocabulary is the same
+        assert set(probabilities.keys()) == set(self._table.keys())  # assert that the vocabulary is the same
 
         normalization = 0
         expected_length = 0
         for symbol, (length, _) in self._table.items():
-            freq = frequencies[symbol]
+            freq = probabilities[symbol]
             expected_length += freq * length
             normalization += freq
 
         return expected_length / normalization
 
-    def get_average_discrepancy(self, frequencies):
+    def get_average_discrepancy(self, probabilities):
         """
-        Computes the average discrepancy between the node probabilities and the frequencies. (assuming {0,1}* ~ Unif({0,1}^*))
+        Computes the average discrepancy between the node probabilities and the probabilities. (assuming {0,1}* ~ Unif({0,1}^*))
         """
-        assert set(frequencies.keys()) == set(self._table.keys())
+        assert set(probabilities.keys()) == set(self._table.keys())
 
         probabilities = {}
         normalization = 0
         for symbol, (length, _) in self._table.items():
-            normalization += frequencies[symbol]
+            normalization += probabilities[symbol]
             probabilities[symbol] = 2**(-length)
 
         discrepancy = 0
         for symbol, (length, _) in self._table.items():
-            discrepancy += abs(probabilities[symbol] - frequencies[symbol]/normalization)
+            discrepancy += abs(probabilities[symbol] - probabilities[symbol]/normalization)
 
         return discrepancy / len(self._table)
 
@@ -126,21 +127,21 @@ class PrefixCodec(object):
 
 class HuffmanCodec(PrefixCodec):
     """
-    Huffman coder, with code table built from given symbol frequencies or raw data,
+    Huffman coder, with code table built from given symbol probabilities or raw data,
     providing encoding and decoding methods.
     """
 
     @classmethod
-    def from_frequencies(cls, frequencies, concat=None):
+    def from_probabilities(cls, probabilities, concat=None):
         """
-        Build Huffman code table from given symbol frequencies
-        :param frequencies: symbol to frequency mapping
+        Build Huffman code table from given symbol probabilities
+        :param probabilities: symbol to probability mapping
         :param concat: function to concatenate symbols
         """
-        concat = concat or _guess_concat(next(iter(frequencies)))
+        concat = concat or _guess_concat(next(iter(probabilities)))
 
         # Heap consists of tuples: (frequency, [list of tuples: (symbol, (bitsize, value))])
-        heap = [(f, [(s, (0, 0))]) for s, f in frequencies.items()]
+        heap = [(f, [(s, (0, 0))]) for s, f in probabilities.items()]
         # Add EOF symbol.
         # TODO: argument to set frequency of EOF?
         # heap.append((1, [(_EOF, (0, 0))]))
@@ -162,4 +163,52 @@ class HuffmanCodec(PrefixCodec):
         # Code table is dictionary mapping symbol to (bitsize, value)
         table = dict(heappop(heap)[1])
 
-        return cls(table, concat=concat, check=False)
+        code_2_symbol = {}
+        for symbol, (bitsize, value) in table.items():
+            code = bin(value)[2:].rjust(bitsize, '0')
+            code_2_symbol[code] = symbol
+
+        return code_2_symbol
+
+
+class BinaryApproximationTree(PrefixCodec):
+
+    @classmethod
+    def from_probabilities(cls, probs_dict, max_depth=10):
+        symbols, probs = zip(*probs_dict.items())
+
+        free_nodes = ["0", "1"]
+        symbol_2_nodes = defaultdict(list)
+
+        bin_exps = [cls._binary_expansion(p, max_depth=max_depth+1) for p in probs]
+
+        for i in range(max_depth):
+            for j, bin_repr in enumerate(bin_exps):
+                if bin_repr[i] == 1:
+                    symbol_2_nodes[j].append(free_nodes.pop())
+
+            # all remaining free nodes are expanded
+            free_nodes = [node+bit for node in free_nodes for bit in ["0", "1"]]
+
+        code_2_symbol = {}
+        for symbol_ix, codes in symbol_2_nodes.items():
+            for code in codes:
+                code_2_symbol[code] = symbols[symbol_ix]  # we only considered symbol indices until here
+
+        return code_2_symbol
+
+    @classmethod
+    def _binary_expansion(cls, x, max_depth):
+        assert x >= 0 and x <= 1
+
+        bits = []
+        approx = 0
+        for i in range(1, max_depth):
+            add = 2**(-i)
+            if approx + add <= x:
+                bits.append(1)
+                approx += add
+            else:
+                bits.append(0)
+
+        return bits  # , approx, abs(approx - x)
