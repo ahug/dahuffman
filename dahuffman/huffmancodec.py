@@ -54,7 +54,16 @@ class PrefixCodec(object):
         for symbol, prob in self.symbol_probs.items():
             discrepancy += abs(self.symbol_probs[symbol] - self.probs_dict[symbol])
 
-        return discrepancy / len(self.symbol_probs)
+        return discrepancy
+
+    def expected_discrepancy(self):
+        assert set(self.probs_dict.keys()) == set(self.code_2_symbol.values())
+
+        exp_discr = 0
+        for symbol, prob in self.symbol_probs.items():
+            exp_discr += self.symbol_probs[symbol] * abs(self.symbol_probs[symbol] - self.probs_dict[symbol])
+
+        return exp_discr
 
     def num_leaves(self):
         return len(self.code_2_symbol)
