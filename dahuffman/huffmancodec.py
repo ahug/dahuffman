@@ -56,6 +56,9 @@ class PrefixCodec(object):
 
         return discrepancy / len(self.symbol_probs)
 
+    def num_leaves(self):
+        return len(self.code_2_symbol)
+
     def __repr__(self):
         return "Codes: " + repr(self.code_2_symbol)
 
