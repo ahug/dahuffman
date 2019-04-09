@@ -1,3 +1,4 @@
+import math
 import collections
 import itertools
 import sys
@@ -64,6 +65,18 @@ class PrefixCodec(object):
             exp_discr += self.symbol_probs[symbol] * abs(self.symbol_probs[symbol] - self.probs_dict[symbol])
 
         return exp_discr
+
+    def kullback_leibler(self):
+        """
+        Symmetrized KL-divergence: returns: KL(p||q) + KL(q||p)
+        """
+        assert set(self.probs_dict.keys()) == set(self.code_2_symbol.values())
+
+        kl = 0
+        for symbol, prob in self.symbol_probs.items():
+            kl += self.probs_dict[symbol] * math.log(self.probs_dict[symbol] / self.symbol_probs[symbol]) + \
+                        self.symbol_probs[symbol] * math.log(self.symbol_probs[symbol] / self.probs_dict[symbol])
+
 
     def num_leaves(self):
         return len(self.code_2_symbol)
